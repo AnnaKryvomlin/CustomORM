@@ -50,6 +50,10 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\CustomORM\CustomORM.csproj">
+      <Project>{ee9ceaa9-2459-4f5e-93e5-e5842fe926eb}</Project>
+      <Name>CustomORM</Name>
+    </ProjectReference>
     <ProjectReference Include="..\SeaFight.DLL\SeaFight.DLL.csproj">
       <Project>{d515882c-5245-403f-8120-f7f6e9562b27}</Project>
       <Name>SeaFight.DLL</Name>
