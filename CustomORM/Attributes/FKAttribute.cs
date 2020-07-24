@@ -8,5 +8,11 @@ namespace CustomORM.Attributes
 {
     public class FKAttribute: Attribute
     {
+        public string nameFKObject;
+
+        public FKAttribute(string nameFKObject)
+        {
+            this.nameFKObject = nameFKObject;
+        }
     }
 }

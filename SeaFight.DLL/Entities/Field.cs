@@ -22,11 +22,11 @@ namespace SeaFight.DLL.Entities
         public delegate void FieldHandler(string message);
         public event FieldHandler Notify;
 
-        public Field(int objectsLimit = 10, string size="", int x=10, int y=10)
+        public Field(int objectsLimit = 10, string size = "", int x = 10, int y = 10)
         {
             FieldSize = new int[x][];
             this.Size = $"{x}x{y}";
-            for(int i=0;i < FieldSize.Length; i++)
+            for (int i = 0; i < FieldSize.Length; i++)
             {
                 FieldSize[i] = new int[y];
             }
@@ -34,6 +34,15 @@ namespace SeaFight.DLL.Entities
             this.XCenter = x / 2;
             this.YCenter = y / 2;
             this.ObjectsInField = new GridObject<Ship>[objectsLimit];
+            this.ObjectsLimit = objectsLimit;
+        }
+
+        public Field(int id, string size, double xCenter, double yCenter, int objectsLimit)
+        {
+            this.ID = ID;
+            this.Size = size;
+            this.XCenter = xCenter;
+            this.YCenter = yCenter;
             this.ObjectsLimit = objectsLimit;
         }
     }

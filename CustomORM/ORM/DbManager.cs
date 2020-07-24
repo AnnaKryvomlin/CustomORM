@@ -31,23 +31,39 @@ namespace CustomORM.ORM
             }
 
             string commandString = CreateInsertCommand<T>(entity);
-            using (connection = new SqlConnection(connectionString))
+            using (this.connection = new SqlConnection(connectionString))
             {
-                connection.Open();
+                this.connection.Open();
 
                 SqlCommand insertValuesCommand = new SqlCommand(commandString.ToString(), connection);
                 insertValuesCommand.ExecuteNonQuery();
             }
         }
 
-        public string CreateInsertCommand<T>(object entity)
+        private string CheckTableName(Type type, out bool flag)
         {
+            flag = false;
+            string tableName = type.Name;
+            if (type.BaseType.Name != "Object")
+            {
+                flag = true;
+                tableName = type.BaseType.Name;
+            }
+
+            return tableName;
+        }
+
+        private string CreateInsertCommand<T>(object entity)
+        {
+            bool flag;
             Type type = entity.GetType();
+            string tableName = CheckTableName(type, out flag);
+           
             StringBuilder commandString = new StringBuilder();
             StringBuilder fieldsString = new StringBuilder();
             StringBuilder valuesString = new StringBuilder();
-            commandString.Append($"INSERT INTO {type.Name} (");
-            // Считывание полей (и наследуемых полей) и значений в классе. 
+            commandString.Append($"INSERT INTO {tableName} (");
+            // Считывание полей и значений в классе. 
             foreach (PropertyInfo fi in type.GetProperties(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
             {
                 if (fi.GetCustomAttribute(typeof(IgnoreAttribute)) != null)
@@ -56,7 +72,7 @@ namespace CustomORM.ORM
                 fieldsString.Append($"{fi.Name}, ");
                 if (fi.Name == "ID" && (Find<T>(fi.GetValue(entity).ToString()) == null || fi.GetValue(entity).ToString() == "0"))
                 {
-                    fi.SetValue(entity, GetLastId(type) + 1);
+                    fi.SetValue(entity, GetLastId(tableName) + 1);
                 }
                 if (fi.GetValue(entity) is string)
                     valuesString.Append($"'{fi.GetValue(entity).ToString()}', ");
@@ -64,21 +80,29 @@ namespace CustomORM.ORM
                     valuesString.Append($"{fi.GetValue(entity).ToString()}, ");
             }
 
+            if (flag)
+            {
+                fieldsString.Append("Discriminator");
+                valuesString.Append($"'{type.Name}'");
+            }
+            else
+            {
             // Удаление пробела и запятой в конце
             fieldsString.Remove(fieldsString.Length - 2, 2);
             valuesString.Remove(valuesString.Length - 2, 2);
+            }
             commandString.Append(fieldsString + ")");
             commandString.Append($" VALUES (" + valuesString + ") ");
             return commandString.ToString();
         }
 
-        public int GetLastId(Type type)
+        private int GetLastId(string tableName)
         {
             object id;
-            using (connection = new SqlConnection(connectionString))
+            using (this.connection = new SqlConnection(connectionString))
             {
-                connection.Open();
-                string query = $"SELECT MAX(ID) FROM {type.Name}";
+                this.connection.Open();
+                string query = $"SELECT MAX(ID) FROM {tableName}";
                 SqlCommand getLastIdCommand = new SqlCommand(query, connection);
                 id = getLastIdCommand.ExecuteScalar();
                 if(id.ToString() == "")
@@ -97,18 +121,21 @@ namespace CustomORM.ORM
 
         public T Find<T>(string pk, string where)
         {
+            Type type = typeof(T);
             T obj = default(T);
-            Type type =typeof(T);
+            type =typeof(T);
             string pkRow = FindPKColumn(type);
-            string commandString = $"SELECT * FROM {type.Name} WHERE {pkRow} = {pk}";
+            bool flag;
+            string tableName = CheckTableName(type, out flag);
+            string commandString = $"SELECT * FROM {tableName} WHERE {pkRow} = {pk}";
             if (where != null)
             {
                 commandString += $"ADD {where}";
             }
 
-            using (connection = new SqlConnection(connectionString))
+            using (this.connection = new SqlConnection(connectionString))
             {
-                connection.Open();
+                this.connection.Open();
                 SqlCommand command = new SqlCommand(commandString, connection);
                 using (SqlDataReader reader = command.ExecuteReader())
                 {
@@ -126,7 +153,7 @@ namespace CustomORM.ORM
         }
 
         // Нахождение PK по атрибуту
-        public string FindPKColumn(Type type)
+        private string FindPKColumn(Type type)
         {
             foreach (PropertyInfo fi in type.GetProperties(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
             {
@@ -135,32 +162,87 @@ namespace CustomORM.ORM
                     return fi.Name;
             }
 
-            foreach (PropertyInfo fi in type.BaseType.GetProperties(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
-            {
-                Attribute attr = fi.GetCustomAttribute(typeof(PKAttribute));
-                if (attr != null)
-                    return fi.Name;
-            }
             throw new InvalidOperationException($"There is no PK in entity");
         }
 
         // Создание объекта из БД
         public T NewEntity<T>(SqlDataReader reader)
         {
+            Type type = typeof(T);
+            // Флаг указывает на то, есть ли у класса наследник, объект которого нужно создать
+            bool flag = false;
+            string nameOfClass = "";
             // Получение колонок, типов и значений полей
             object[] columns = new object[reader.FieldCount];
             reader.GetValues(columns);
-            Type[] types = new Type[columns.Length - 1];
-            object[] fieldValues = new object[columns.Length - 1];
-            
-            for (int i = 1; i < columns.Length; i++)
+            List<Type> types = new List<Type>();
+            List<object> fieldValues = new List<object>();
+            // Переменная хранит количество параметров в классе
+            var propCount = type.GetProperties().Where(pi => pi.GetCustomAttribute(typeof(IgnoreAttribute), true) == null).Count();
+            for (int i = 0, j = 0; i < columns.Length && j < propCount + 1; i++, j++)
             {
-                types[i - 1] = columns[i].GetType();
-                fieldValues[i - 1] = columns[i];
+                if (reader.GetName(i) != "Discriminator")
+                {
+                    types.Add(columns[i].GetType());
+                    fieldValues.Add(columns[i]);
+                }
+                else
+                {
+                    flag = true;
+                    nameOfClass = columns[i].ToString();
+                }
             }
-            // Вызов соответствующего конструктора
-            T createdObject = (T)typeof(T).GetConstructor(types).Invoke(fieldValues);
+
+            T createdObject = default(T);
+            if (flag)
+            {
+                // Считывает со сборки все подклассы указанного класса и выбирает подходящий
+                var typesOfClasses = Assembly.GetAssembly(typeof(T)).GetExportedTypes().Where(i => i.IsSubclassOf(typeof(T)));
+                foreach (Type t in typesOfClasses)
+                {
+                    if (t.Name == nameOfClass)
+                    {
+                        // Вызов соответствующего конструктора
+                        createdObject = (T)FindConstructor(t, types.ToArray().Length).Invoke(fieldValues.ToArray());
+                    }
+                }
+            }
+
+            else
+            {
+                // Вызов соответствующего конструктора
+                createdObject = (T)FindConstructor(typeof(T), types.ToArray().Length).Invoke(fieldValues.ToArray());
+            }
+
+            propCount = flag ? propCount + 1 : propCount;
+            // Ищет в сборке класс подходящий под имя хранящееся в атрибуте FK, вызывает конструктор и создаёт объект, добавляет в найденный объект.
+            if (columns.Length > propCount)
+            {
+                var foreignKey = type.GetProperties().FirstOrDefault(pi => pi.GetCustomAttribute(typeof(FKAttribute), true) != null);
+                var typeOfClass = Assembly.GetAssembly(typeof(T)).GetExportedTypes().Where(i => i.Name == FindValueInAttribute(foreignKey)).FirstOrDefault();
+                List<object> fieldValuesRelObject = new List<object>();
+                for (int i = propCount; i < columns.Length; i++)
+                {
+                    fieldValuesRelObject.Add(columns[i]);
+                }
+                var relatedObject = FindConstructor(typeOfClass, (columns.Length - propCount)).Invoke(fieldValuesRelObject.ToArray());
+                var relObjectProp = type.GetProperties().FirstOrDefault(pi => pi.Name == relatedObject.GetType().Name);
+                relObjectProp.SetValue(createdObject, relatedObject);
+            }
+
             return createdObject;
+        }
+
+        private ConstructorInfo FindConstructor(Type type, int paramCount)
+        {
+            ConstructorInfo[] ci = type.GetConstructors();
+            int x;
+            for (x = 0; x < ci.Length; x++)
+            {
+                ParameterInfo[] pi = ci[x].GetParameters();
+                if (pi.Length == paramCount) break;
+            }
+            return ci[x];
         }
 
         // Получение всех данных с БД
@@ -171,18 +253,30 @@ namespace CustomORM.ORM
 
         public IEnumerable<T> FindAll<T>(string where)
         {
+            Type type = typeof(T);
+            string pkRow = FindPKColumn(type);
+            bool flag;
+            string tableName = CheckTableName(type, out flag);
             List<T> entities = new List<T>();
-            string selectionString = $"SELECT * FROM {typeof(T).Name}";
-            if (where != null)
+            StringBuilder selectionString = new StringBuilder();
+            selectionString.Append($"SELECT * FROM {tableName}");
+            var foreignKey = type.GetProperties().FirstOrDefault(pi => pi.GetCustomAttribute(typeof(FKAttribute), true) != null);
+            if (foreignKey != null)
             {
-                selectionString += $" WHERE {where}";
+                string FKtableName = FindValueInAttribute(foreignKey);
+                selectionString.Append($" LEFT JOIN {FKtableName} ON {tableName}.{FKtableName}ID = {FKtableName}.ID ");
             }
 
-            using (connection = new SqlConnection(connectionString))
+            if (where != null)
             {
-                connection.Open();
+                selectionString.Append($" WHERE {where}");
+            }
 
-                SqlCommand selectionCommand = new SqlCommand(selectionString, connection);
+            using (this.connection = new SqlConnection(connectionString))
+            {
+                this.connection.Open();
+
+                SqlCommand selectionCommand = new SqlCommand(selectionString.ToString(), connection);
                 SqlDataReader reader = selectionCommand.ExecuteReader();
                 using (reader)
                 {
@@ -194,6 +288,15 @@ namespace CustomORM.ORM
             }
 
             return entities;
+        }
+
+        private string FindValueInAttribute (PropertyInfo prop)
+        {
+            Type FKtype = typeof(FKAttribute);
+            FKAttribute FKattr = (FKAttribute)
+            Attribute.GetCustomAttribute(prop, FKtype);
+            string FKTableName = FKattr.nameFKObject;
+            return FKTableName;
         }
 
         public void Remove<T>(object entity)
@@ -214,10 +317,12 @@ namespace CustomORM.ORM
         {
             Type type = typeof(T);
             string pkRow = FindPKColumn(type);
-            string commandString = $"DELETE FROM {typeof(T).Name} WHERE {pkRow} = {pk}";
-            using (connection = new SqlConnection(connectionString))
+            bool flag;
+            string tableName = CheckTableName(type, out flag);
+            string commandString = $"DELETE FROM {tableName} WHERE {pkRow} = {pk}";
+            using (this.connection = new SqlConnection(connectionString))
             {
-                connection.Open();
+                this.connection.Open();
                 SqlCommand command = new SqlCommand(commandString, connection);
                 int num = command.ExecuteNonQuery();
 
@@ -228,20 +333,22 @@ namespace CustomORM.ORM
             }
         }
 
-        public void Update(object entity)
+        public void Update<T>(object entity)
         {
             if (entity == null)
             {
                 throw new ArgumentNullException("Entity can't be null");
             }
 
-            int numberUpdatedRows;
+            bool flag;
             Type type = entity.GetType();
+            string tableName = CheckTableName(type, out flag);
+            int numberUpdatedRows;
             string pkRow = FindPKColumn(type);
             string pk = "";
             StringBuilder commandString = new StringBuilder();
             StringBuilder setString = new StringBuilder();
-            commandString.Append($"UPDATE {type.Name} SET ");
+            commandString.Append($"UPDATE {tableName} SET ");
             // Считывание полей (и наследуемых полей) и значений в классе 
             foreach (PropertyInfo fi in type.GetProperties(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
             {
@@ -255,13 +362,21 @@ namespace CustomORM.ORM
                 else
                     setString.Append($"{fi.GetValue(entity).ToString()}, ");
             }
+
+            if (flag)
+            {
+                setString.Append($"Discriminator = {type.Name}");
+            }
+            else
+            {
             // Удаление пробела и запятой в конце
             setString.Remove(setString.Length - 2, 2);
+            }
             commandString.Append(setString + " ");
             commandString.Append($" WHERE {pkRow} = {pk}");
-            using (connection = new SqlConnection(connectionString))
+            using (this.connection = new SqlConnection(connectionString))
             {
-                connection.Open();
+                this.connection.Open();
                 SqlCommand insertValuesCommand = new SqlCommand(commandString.ToString(), connection);
                 numberUpdatedRows = insertValuesCommand.ExecuteNonQuery();
             }

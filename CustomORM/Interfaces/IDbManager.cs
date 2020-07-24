@@ -13,7 +13,7 @@ namespace CustomORM.Interfaces
         T Find<T>(string pk);
         T Find<T>(string pk, string where);
         void Add<T>(object entity);
-        void Update(object entity);
+        void Update<T>(object entity);
         void Remove<T>(object entity);
         void Remove<T>(string pk);
     }

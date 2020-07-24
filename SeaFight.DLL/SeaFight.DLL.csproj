@@ -50,8 +50,6 @@
     <Compile Include="Entities\MilitaryShip.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Entities\Ship.cs" />
-    <Compile Include="Repositories\AuxiliaryShipRepository.cs" />
-    <Compile Include="Repositories\FieldRepository.cs" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>
